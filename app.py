@@ -1,13 +1,18 @@
 from flask import Flask, request, render_template_string, send_file
 from PIL import Image, ImageOps
 import pillow_heif
+import img2pdf
 from io import BytesIO
 import uuid
+import os
+import tempfile
 
 app = Flask(__name__)
 pillow_heif.register_heif_opener()
 
 MAX_IMAGES = 30
+MAX_DIMENSION = 2000
+JPEG_QUALITY = 82
 
 HTML = """
 <!doctype html>
@@ -37,6 +42,11 @@ HTML = """
             color: red;
             margin-top: 15px;
             font-weight: bold;
+            white-space: pre-wrap;
+        }
+        .note {
+            margin-top: 14px;
+            color: #555;
         }
     </style>
 </head>
@@ -48,6 +58,9 @@ HTML = """
             <input type="text" name="pdf_name" placeholder="PDF name" value="converted_images"><br>
             <button type="submit">Convert to PDF</button>
         </form>
+        <div class="note">
+            Supports up to 30 images. Large photos are automatically optimized to reduce memory use.
+        </div>
         {% if error %}
             <div class="error">{{ error }}</div>
         {% endif %}
@@ -70,10 +83,19 @@ def safe_pdf_name(name: str) -> str:
 
     return cleaned
 
-def load_image_to_rgb(file_storage) -> Image.Image:
-    img = Image.open(file_storage.stream)
-    img = ImageOps.exif_transpose(img)
-    return img.convert("RGB")
+def convert_one_image_to_temp_jpeg(file_storage, output_path: str) -> None:
+    file_storage.stream.seek(0)
+
+    with Image.open(file_storage.stream) as img:
+        img = ImageOps.exif_transpose(img)
+        img = img.convert("RGB")
+        img.thumbnail((MAX_DIMENSION, MAX_DIMENSION), Image.Resampling.LANCZOS)
+        img.save(
+            output_path,
+            format="JPEG",
+            quality=JPEG_QUALITY,
+            optimize=True
+        )
 
 @app.route("/", methods=["GET"])
 def home():
@@ -93,23 +115,22 @@ def convert():
         return render_template_string(HTML, error=f"You can upload up to {MAX_IMAGES} images only.")
 
     try:
-        pil_images = [load_image_to_rgb(f) for f in valid_files]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            jpeg_paths = []
 
-        pdf_buffer = BytesIO()
-        pil_images[0].save(
-            pdf_buffer,
-            format="PDF",
-            save_all=True,
-            append_images=pil_images[1:]
-        )
-        pdf_buffer.seek(0)
+            for i, f in enumerate(valid_files, start=1):
+                temp_jpeg_path = os.path.join(temp_dir, f"page_{i:03d}.jpg")
+                convert_one_image_to_temp_jpeg(f, temp_jpeg_path)
+                jpeg_paths.append(temp_jpeg_path)
 
-        return send_file(
-            pdf_buffer,
-            as_attachment=True,
-            download_name=pdf_name,
-            mimetype="application/pdf"
-        )
+            pdf_bytes = img2pdf.convert(jpeg_paths)
+
+            return send_file(
+                BytesIO(pdf_bytes),
+                as_attachment=True,
+                download_name=pdf_name,
+                mimetype="application/pdf"
+            )
 
     except Exception as e:
         return render_template_string(HTML, error=f"Conversion failed: {str(e)}")

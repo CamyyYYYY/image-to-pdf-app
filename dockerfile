@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
     libmagickwand-dev \
     tk \
     tk-dev \
+    python3-tk \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 

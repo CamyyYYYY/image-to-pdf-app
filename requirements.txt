@@ -1,5 +1,5 @@
 Flask
 Pillow
 pillow-heif
-Wand
+img2pdf
 gunicorn

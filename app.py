@@ -1,84 +1,118 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox
-from PIL import Image
+from flask import Flask, request, render_template_string, send_file
+from PIL import Image, ImageOps
 import pillow_heif
-import os
+from io import BytesIO
+import uuid
 
-# 🔥 Enable HEIC support
+app = Flask(__name__)
 pillow_heif.register_heif_opener()
 
 MAX_IMAGES = 30
 
-class ImgToPDFApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Image → PDF Converter (HEIC Supported)")
-        self.root.geometry("400x250")
+HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Image to PDF Converter</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f6f7fb;
+        }
+        .box {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+        }
+        input, button {
+            margin-top: 12px;
+        }
+        .error {
+            color: red;
+            margin-top: 15px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>Image → PDF Converter</h1>
+        <form method="POST" action="/convert" enctype="multipart/form-data">
+            <input type="file" name="images" multiple accept="image/*,.heic,.heif" required><br>
+            <input type="text" name="pdf_name" placeholder="PDF name" value="converted_images"><br>
+            <button type="submit">Convert to PDF</button>
+        </form>
+        {% if error %}
+            <div class="error">{{ error }}</div>
+        {% endif %}
+    </div>
+</body>
+</html>
+"""
 
-        self.images = []
+def safe_pdf_name(name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        return "converted_images.pdf"
 
-        tk.Label(root, text="Select up to 30 images", font=("Arial", 14)).pack(pady=10)
+    cleaned = "".join(c for c in name if c.isalnum() or c in (" ", "-", "_")).strip()
+    if not cleaned:
+        cleaned = f"converted_images_{uuid.uuid4().hex[:8]}"
 
-        tk.Button(root, text="Select Images", command=self.select_images, width=20).pack(pady=5)
-        tk.Button(root, text="Convert to PDF", command=self.convert_to_pdf, width=20).pack(pady=5)
+    if not cleaned.lower().endswith(".pdf"):
+        cleaned += ".pdf"
 
-        self.status = tk.Label(root, text="No images selected", fg="gray")
-        self.status.pack(pady=10)
+    return cleaned
 
-    def select_images(self):
-        files = filedialog.askopenfilenames(
-            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.webp *.heic")]
+def load_image_to_rgb(file_storage) -> Image.Image:
+    img = Image.open(file_storage.stream)
+    img = ImageOps.exif_transpose(img)
+    return img.convert("RGB")
+
+@app.route("/", methods=["GET"])
+def home():
+    return render_template_string(HTML, error=None)
+
+@app.route("/convert", methods=["POST"])
+def convert():
+    files = request.files.getlist("images")
+    pdf_name = safe_pdf_name(request.form.get("pdf_name", "converted_images"))
+
+    valid_files = [f for f in files if f and f.filename.strip() != ""]
+
+    if not valid_files:
+        return render_template_string(HTML, error="No images selected.")
+
+    if len(valid_files) > MAX_IMAGES:
+        return render_template_string(HTML, error=f"You can upload up to {MAX_IMAGES} images only.")
+
+    try:
+        pil_images = [load_image_to_rgb(f) for f in valid_files]
+
+        pdf_buffer = BytesIO()
+        pil_images[0].save(
+            pdf_buffer,
+            format="PDF",
+            save_all=True,
+            append_images=pil_images[1:]
+        )
+        pdf_buffer.seek(0)
+
+        return send_file(
+            pdf_buffer,
+            as_attachment=True,
+            download_name=pdf_name,
+            mimetype="application/pdf"
         )
 
-        if not files:
-            return
-
-        if len(files) > MAX_IMAGES:
-            messagebox.showerror("Error", f"Max {MAX_IMAGES} images allowed.")
-            return
-
-        self.images = files
-        self.status.config(text=f"{len(files)} images selected")
-
-    def convert_to_pdf(self):
-        if not self.images:
-            messagebox.showerror("Error", "No images selected")
-            return
-
-        save_path = filedialog.asksaveasfilename(
-            defaultextension=".pdf",
-            filetypes=[("PDF Files", "*.pdf")]
-        )
-
-        if not save_path:
-            return
-
-        try:
-            pil_images = []
-
-            for file in self.images:
-                img = Image.open(file)
-
-                # Convert to RGB (required for PDF)
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                else:
-                    img = img.convert("RGB")
-
-                pil_images.append(img)
-
-            first = pil_images[0]
-            rest = pil_images[1:]
-
-            first.save(save_path, save_all=True, append_images=rest)
-
-            messagebox.showinfo("Success", "PDF created successfully!")
-
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-
+    except Exception as e:
+        return render_template_string(HTML, error=f"Conversion failed: {str(e)}")
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = ImgToPDFApp(root)
-    root.mainloop()
+    app.run(debug=True)

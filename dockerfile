@@ -3,6 +3,8 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y \
     imagemagick \
     libmagickwand-dev \
+    tk \
+    tk-dev \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 

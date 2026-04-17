@@ -11,8 +11,8 @@ app = Flask(__name__)
 pillow_heif.register_heif_opener()
 
 MAX_IMAGES = 30
-MAX_DIMENSION = 2000
-JPEG_QUALITY = 82
+MAX_DIMENSION = 1400
+JPEG_QUALITY = 70
 
 HTML = """
 <!doctype html>
@@ -59,7 +59,7 @@ HTML = """
             <button type="submit">Convert to PDF</button>
         </form>
         <div class="note">
-            Supports up to 30 images. Large photos are automatically optimized to reduce memory use.
+            Supports up to 30 images. Large images are reduced automatically for free-tier stability.
         </div>
         {% if error %}
             <div class="error">{{ error }}</div>
@@ -88,13 +88,13 @@ def convert_one_image_to_temp_jpeg(file_storage, output_path: str) -> None:
 
     with Image.open(file_storage.stream) as img:
         img = ImageOps.exif_transpose(img)
+        img.draft("RGB", (MAX_DIMENSION, MAX_DIMENSION))
         img = img.convert("RGB")
-        img.thumbnail((MAX_DIMENSION, MAX_DIMENSION), Image.Resampling.LANCZOS)
+        img.thumbnail((MAX_DIMENSION, MAX_DIMENSION), Image.Resampling.BILINEAR)
         img.save(
             output_path,
             format="JPEG",
-            quality=JPEG_QUALITY,
-            optimize=True
+            quality=JPEG_QUALITY
         )
 
 @app.route("/", methods=["GET"])
